@@ -1,8 +1,9 @@
-name: Leaflow Auto Checkin
+name: Veloera Auto Checkin
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天UTC时间01:00运行（北京时间09:00）
+    # 每天 UTC 时间 0:00 运行 (北京时间 8:00)
+    - cron: '0 0 * * *'
   workflow_dispatch:  # 允许手动触发
 
 jobs:
@@ -10,31 +11,38 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
-      
+    
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: Install Chrome
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        
-    - name: Run auto checkin
+        pip install requests
+    
+    - name: Run checkin script
       env:
-        LEAFLOW_ACCOUNTS: ${{ secrets.LEAFLOW_ACCOUNTS }}
-        LEAFLOW_EMAIL: ${{ secrets.LEAFLOW_EMAIL }}
-        LEAFLOW_PASSWORD: ${{ secrets.LEAFLOW_PASSWORD }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        GITHUB_ACTIONS: true
+        # 从 GitHub Secrets 读取配置
+        MIAOGEAPI_BASE_URL: ${{ secrets.MIAOGEAPI_BASE_URL }}
+        MIAOGEAPI_USER_ID: ${{ secrets.MIAOGEAPI_USER_ID }}
+        MIAOGEAPI_TOKEN: ${{ secrets.MIAOGEAPI_TOKEN }}
+        MIAOGEAPI_CHECKIN_ENDPOINT: "/api/user/check_in"
+        MIAOGEAPI_TIMEOUT: "30"
+        MIAOGEAPI_RETRY_COUNT: "3"
+        MIAOGEAPI_RETRY_DELAY: "1.0"
       run: |
-        python leaflow_checkin.py
+        python veloera_checkin.py
+    
+    - name: Upload logs (if needed)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: checkin-logs-${{ github.run_number }}
+        path: |
+          *.log
+        retention-days: 7
+        if-no-files-found: ignore

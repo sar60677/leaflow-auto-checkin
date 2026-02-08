@@ -366,85 +366,145 @@ class LeaflowAutoCheckin:
             return False
     
     def checkin(self):
-        """执行签到流程"""
-        logger.info("跳转到签到页面...")
+        """执行签到流程 - 通过工作空间页面的签到试用按钮打开弹窗"""
+        import re
+        logger.info("跳转到工作空间页面，通过签到试用按钮进入签到页面...")
         
-        # 跳转到签到页面
-        self.driver.get("https://checkin.leaflow.net")
+        # 先跳转到工作空间页面
+        self.driver.get("https://leaflow.net/workspaces")
+        time.sleep(5)
         
-        # 等待签到页面加载（最多重试3次，每次等待20秒）
-        if not self.wait_for_checkin_page_loaded(max_retries=3, wait_time=20):
-            raise Exception("签到页面加载失败，无法找到签到相关元素")
+        # 查找并点击"签到试用"按钮
+        checkin_trial_selectors = [
+            "//button[contains(text(), '签到试用')]",
+            "//a[contains(text(), '签到试用')]",
+            "//*[contains(text(), '签到试用')]",
+        ]
         
-        # 查找并点击立即签到按钮
-        checkin_result = self.find_and_click_checkin_button()
+        checkin_trial_btn = None
+        for selector in checkin_trial_selectors:
+            try:
+                checkin_trial_btn = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, selector))
+                )
+                if checkin_trial_btn and checkin_trial_btn.is_displayed():
+                    logger.info("找到签到试用按钮")
+                    break
+            except:
+                continue
         
-        if checkin_result == "already_checked_in":
-            return "今日已签到"
-        elif checkin_result is True:
-            logger.info("已点击立即签到按钮")
-            time.sleep(5)  # 等待签到结果
-            
-            # 获取签到结果
-            result_message = self.get_checkin_result()
-            return result_message
-        else:
-            raise Exception("找不到立即签到按钮或按钮不可点击")
-    
-    def get_checkin_result(self):
-        """获取签到结果消息"""
+        if not checkin_trial_btn:
+            raise Exception("在工作空间页面未找到签到试用按钮")
+        
+        # 点击签到试用按钮
         try:
-            # 给页面一些时间显示结果
-            time.sleep(3)
+            checkin_trial_btn.click()
+        except Exception:
+            self.driver.execute_script("arguments[0].click();", checkin_trial_btn)
+        logger.info("已点击签到试用按钮，等待弹窗加载...")
+        
+        # 等待弹窗中的 iframe 加载
+        time.sleep(5)
+        
+        # 切换到弹窗中的 iframe
+        iframe_switched = False
+        try:
+            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            logger.info(f"找到 {len(iframes)} 个 iframe")
+            for iframe in iframes:
+                try:
+                    src = iframe.get_attribute("src") or ""
+                    logger.info(f"iframe src: {src}")
+                    if "checkin" in src or iframe.is_displayed():
+                        self.driver.switch_to.frame(iframe)
+                        iframe_switched = True
+                        logger.info("已切换到签到弹窗 iframe")
+                        break
+                except:
+                    continue
+        except Exception as e:
+            logger.warning(f"查找 iframe 时出错: {e}")
+        
+        # 等待 iframe 内容加载
+        time.sleep(5)
+        
+        try:
+            # 获取弹窗内页面文本，检查签到状态
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+            # logger.info(f"弹窗内页面文本: {body_text[:200]}")
             
-            # 尝试查找各种可能的成功消息元素
-            success_selectors = [
-                ".alert-success",
-                ".success",
-                ".message",
-                "[class*='success']",
-                "[class*='message']",
-                ".modal-content",  # 弹窗内容
-                ".ant-message",    # Ant Design 消息
-                ".el-message",     # Element UI 消息
-                ".toast",          # Toast消息
-                ".notification"    # 通知
+            # 检查是否今日已签到
+            if "已签到" in body_text and "立即签到" not in body_text:
+                logger.info("今日已签到过了")
+                return "今日已签到"
+            
+            # 查找并点击"立即签到"按钮
+            checkin_btn_selectors = [
+                "//button[contains(text(), '立即签到')]",
+                "//a[contains(text(), '立即签到')]",
+                "//*[contains(text(), '立即签到')]",
+                "button.checkin-btn",
             ]
             
-            for selector in success_selectors:
+            checkin_btn = None
+            for selector in checkin_btn_selectors:
                 try:
-                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if element.is_displayed():
-                        text = element.text.strip()
-                        if text:
-                            return text
+                    if selector.startswith("//"):
+                        checkin_btn = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable((By.XPATH, selector))
+                        )
+                    else:
+                        checkin_btn = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        )
+                    if checkin_btn and checkin_btn.is_displayed():
+                        logger.info("找到立即签到按钮")
+                        break
                 except:
                     continue
             
-            # 如果没有找到特定元素，检查页面文本
-            page_text = self.driver.find_element(By.TAG_NAME, "body").text
-            important_keywords = ["成功", "签到", "获得", "恭喜", "谢谢", "感谢", "完成", "已签到", "连续签到"]
+            if not checkin_btn:
+                # 再次检查是否已签到
+                if "已签到" in body_text:
+                    return "今日已签到"
+                raise Exception("找不到立即签到按钮")
             
-            for keyword in important_keywords:
-                if keyword in page_text:
-                    # 提取包含关键词的行
-                    lines = page_text.split('\n')
-                    for line in lines:
-                        if keyword in line and len(line.strip()) < 100:  # 避免提取过长的文本
-                            return line.strip()
-            
-            # 检查签到按钮状态变化
+            # 点击立即签到
             try:
-                checkin_btn = self.driver.find_element(By.CSS_SELECTOR, "button.checkin-btn")
-                if not checkin_btn.is_enabled() or "已签到" in checkin_btn.text or "disabled" in checkin_btn.get_attribute("class"):
-                    return "今日已签到完成"
-            except:
-                pass
+                checkin_btn.click()
+            except Exception:
+                self.driver.execute_script("arguments[0].click();", checkin_btn)
+            logger.info("已点击立即签到按钮")
             
-            return "签到完成，但未找到具体结果消息"
+            # 等待签到结果
+            time.sleep(5)
+            
+            # 获取签到结果 - 提取奖励金额
+            result_text = self.driver.find_element(By.TAG_NAME, "body").text
+            # logger.info(f"签到后页面文本: {result_text[:200]}")
+            
+            # 用正则提取奖励金额，如 "+1.67"
+            reward_match = re.search(r'\+[\d.]+\s*元?', result_text)
+            if reward_match:
+                reward = reward_match.group()
+                logger.info(f"签到奖励: {reward}")
+                return f"签到成功，获得 {reward}"
+            
+            if "已签到" in result_text or "签到成功" in result_text:
+                return "签到成功"
+            
+            return "签到完成"
             
         except Exception as e:
-            return f"获取签到结果时出错: {str(e)}"
+            raise Exception(f"签到操作失败: {e}")
+        finally:
+            # 切换回主页面
+            if iframe_switched:
+                try:
+                    self.driver.switch_to.default_content()
+                    logger.info("已切换回主页面")
+                except:
+                    pass
     
     def run(self):
         """单个账号执行流程"""
